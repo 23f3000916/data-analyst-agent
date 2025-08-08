@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: data-analyst-agent
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
