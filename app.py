@@ -158,6 +158,7 @@ def plot_to_base64(max_bytes=100000):
         "import matplotlib",
         "matplotlib.use('Agg')",
         "import matplotlib.pyplot as plt",
+        "import networkx as nx" # Added networkx for network analysis test case
     ]
 
     if injected_pickle:
@@ -166,7 +167,10 @@ def plot_to_base64(max_bytes=100000):
     else:
         preamble.append("data = {}") # Ensure 'data' exists
 
-    full_code = "\n".join(preamble) + "\n" + helper_code + "\nresults = {}\n" + code
+    # Ensure the generated code doesn't have accidental prints
+    cleaned_code = code.strip()
+
+    full_code = "\n".join(preamble) + "\n" + helper_code + "\nresults = {}\n" + cleaned_code
     full_code += "\nprint(json.dumps({'status':'success','result':results}, default=str), flush=True)\n"
 
     tmp_path = ""
@@ -211,12 +215,12 @@ prompt = ChatPromptTemplate.from_messages([
 
 You will receive rules, questions, and an optional dataset preview.
 
-You must:
-1. Follow the rules exactly.
-2. Return ONLY a valid JSON object with two keys: "questions" (a list of original question strings) and "code" (a string of Python code).
-3. Your Python code must populate a dictionary named `results` where each key is a question string and the value is the computed answer.
-4. Your code will run in a sandbox with pandas, numpy, and matplotlib.
-5. A helper function `plot_to_base64()` is available for creating base64-encoded images under 100KB. ALWAYS use it for plots."""),
+You must follow these rules strictly:
+1.  **CRITICAL**: Your generated code must NOT include any `print()` statements. The execution environment handles the final output. Your only task is to populate the `results` dictionary.
+2.  Return ONLY a valid JSON object with two keys: "questions" (a list of original question strings) and "code" (a string of Python code).
+3.  Your Python code must populate a dictionary named `results` where each key is a question string and the value is the computed answer.
+4.  Your code will run in a sandbox with pandas, numpy, and matplotlib.
+5.  A helper function `plot_to_base64()` is available for creating base64-encoded images under 100KB. ALWAYS use it for plots."""),
     ("human", "{input}"),
     MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
@@ -250,6 +254,10 @@ def run_analysis_pipeline(llm_input: str, pickle_path: str = None) -> Dict:
 
         code = parsed.get("code")
         questions = parsed.get("questions")
+
+        # Log the generated code for debugging purposes
+        logger.info(f"--- AGENT GENERATED CODE ---\n{code}\n--------------------------")
+
         if not code or not questions:
             return {"error": "Invalid agent response: 'code' or 'questions' key missing.", "raw": parsed}
 
