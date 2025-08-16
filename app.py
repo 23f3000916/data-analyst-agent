@@ -310,11 +310,20 @@ async def analyze_data(request: Request):
     """
     try:
         form = await request.form()
-        questions_file = form.get("questions_file")
-        data_file = form.get("data_file")
-
+        
+        # Correctly get the questions file from the form field named "questions.txt"
+        questions_file = form.get("questions.txt")
         if not questions_file or not hasattr(questions_file, "read"):
-            raise HTTPException(400, "Missing 'questions_file' in form data.")
+            raise HTTPException(400, "Missing 'questions.txt' in form data.")
+
+        # Find the optional data file by iterating through the form items
+        data_file = None
+        for key in form:
+            if key != 'questions.txt':
+                item = form[key]
+                if hasattr(item, 'filename') and item.filename:
+                    data_file = item
+                    break # Found the data file, stop looking
 
         raw_questions = (await questions_file.read()).decode("utf-8")
         keys_list, type_map = parse_keys_and_types(raw_questions)
@@ -322,7 +331,7 @@ async def analyze_data(request: Request):
         pickle_path = None
         df_preview = ""
         
-        if data_file and hasattr(data_file, "filename") and data_file.filename:
+        if data_file:
             filename = data_file.filename.lower()
             content = await data_file.read()
             
