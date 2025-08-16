@@ -216,11 +216,11 @@ prompt = ChatPromptTemplate.from_messages([
 You will receive rules, questions, and an optional dataset preview.
 
 You must follow these rules strictly:
-1.  **CRITICAL**: Your generated code must NOT include any `print()` statements. The execution environment handles the final output. Your only task is to populate the `results` dictionary.
-2.  Return ONLY a valid JSON object with two keys: "questions" (a list of original question strings) and "code" (a string of Python code).
-3.  Your Python code must populate a dictionary named `results` where each key is a question string and the value is the computed answer.
-4.  Your code will run in a sandbox with pandas, numpy, and matplotlib.
-5.  A helper function `plot_to_base64()` is available for creating base64-encoded images under 100KB. ALWAYS use it for plots."""),
+1.  Return ONLY a valid JSON object with two keys: "questions" (a list of original question strings) and "code" (a string of Python code).
+2.  Your Python code must populate a dictionary named `results` where each key is a question string and the value is the computed answer.
+3.  Your code will run in a sandbox with pandas, numpy, and matplotlib.
+4.  A helper function `plot_to_base64()` is available. To generate a chart, call it with NO arguments, like `results['my_chart'] = plot_to_base64()`. DO NOT pass `plt` or any other variables as an argument.
+5.  **CRITICAL**: Your generated code must NOT include any `print()` statements. The execution environment handles the final output. Your only task is to populate the `results` dictionary."""),
     ("human", "{input}"),
     MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
