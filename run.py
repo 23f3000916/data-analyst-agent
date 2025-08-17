@@ -48,7 +48,7 @@ def main():
         sys.exit(1)
 
     base_url = sys.argv[1].rstrip("/")
-    api_url = f"{base_url}/api/"
+    api_url = f"{base_url}/api"
 
     qpath = find_first_questions()
     if not qpath:
