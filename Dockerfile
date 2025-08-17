@@ -1,35 +1,21 @@
-# Use Python 3.12 slim image as base
-FROM python:3.12-slim
+# Use an official Python runtime as a parent image
+FROM python:3.10-slim
 
-# Set working directory
+# Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Copy the current directory contents into the container at /app
+COPY requirements.txt ./
 
-# Copy requirements file
-COPY requirements.txt .
-
-# Install Python dependencies
+# Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY app.py .
-COPY index.html .
-COPY entrypoint.sh .
+# Make port 80 available to the world outside this container
+EXPOSE 80
 
-# Copy environment file if it exists
-COPY .env* ./
+# Run app.py when the container launches
+# Run main.py from project root when the container launches
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "80"]
 
-# Make entrypoint script executable
-RUN chmod +x entrypoint.sh
-
-# Expose the port the app runs on
-EXPOSE 8000
-
-# Command to run the application
-CMD ["./entrypoint.sh"]
+# Now copy the rest of the code
+COPY . .

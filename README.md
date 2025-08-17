@@ -186,17 +186,6 @@ python app.py
    gunicorn app:app -w 4 -k uvicorn.workers.UvicornWorker
    ```
 
-### Docker Deployment
-```dockerfile
-FROM python:3.9-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-EXPOSE 8000
-CMD ["python", "app.py"]
-```
-
 ## 📝 Configuration
 
 ### Environment Variables
@@ -204,24 +193,12 @@ CMD ["python", "app.py"]
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `GOOGLE_API_KEY` | Google Generative AI API key | Required |
-| `LLM_TIMEOUT_SECONDS` | Timeout for LLM operations | 150 |
 
 ### Customization Options
 - Modify visualization styles in the frontend CSS
 - Adjust analysis parameters in the tool functions
 - Configure CORS settings for production deployment
 - Customize the LLM prompt templates
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes and add tests
-4. Commit your changes: `git commit -am 'Add feature'`
-5. Push to the branch: `git push origin feature-name`
-6. Submit a pull request
 
 ### Development Setup
 ```bash
@@ -252,9 +229,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Ensure file size is within limits
 - Verify file encoding (UTF-8 recommended)
 
-**Analysis Timeout**
-- Increase `LLM_TIMEOUT_SECONDS` in your `.env` file
-- Consider breaking large datasets into smaller chunks
 
 ### Getting Help
 - Check the [Issues](../../issues) page for known problems
@@ -277,5 +251,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **v1.2.0**: Enhanced visualization options
 
 ---
-
-**Built with ❤️ using FastAPI, LangChain, and Google Generative AI**
