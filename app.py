@@ -1,6 +1,4 @@
-from fastapi.responses import FileResponse, Response
-from fastapi import Request
-from fastapi.middleware.cors import CORSMiddleware
+
 import os
 import networkx as nx
 import re
@@ -13,6 +11,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import io
+import os
+import re
+import json
+import base64
+import tempfile
 import subprocess
 import logging
 from io import BytesIO
@@ -23,13 +26,18 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi import FastAPI
 from dotenv import load_dotenv
 
-import tabula
-
-
 import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def read_root():
+    return {"message": "Hello Railway"}
 
 # Optional image conversion
 try:
@@ -50,31 +58,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TDS Data Analyst Agent")
 
-
-# ----- CORS for LOCAL TESTING ----------#
-
-# allow requests from external portals/domains
-# origins = [
-#     "http://localhost:3000",  # React, Vue, etc. local dev
-#     "http://localhost:8000/",
-#     "http://127.0.0.1:3000",
-#     "https://your-online-portal.com",  # the hosted test portal
-#     "*"  # (use * only for testing; not recommended in production)
-# ]
-
-app.add_middleware(
-    CORSMiddleware,
-    # list of allowed origins, allowing all as the evaluation origin may change
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],           # allow all HTTP methods
-    allow_headers=["*"],           # allow all headers
-)
-
-LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", 250))
-
-
-# CORS Setup Ends #
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", 150))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -107,6 +91,8 @@ def parse_keys_and_types(raw_questions: str):
     type_map = {key: type_map_def.get(t.lower(), str) for key, t in matches}
     keys_list = [k for k, _ in matches]
     return keys_list, type_map
+
+
 
 
 # -----------------------------
@@ -176,22 +162,12 @@ def scrape_url_to_dataframe(url: str) -> Dict[str, Any]:
                 text = soup.get_text(separator="\n", strip=True)
                 df = pd.DataFrame({"text": [text]})
 
-        # --- PDF ---
-        elif "application/pdf" in ctype or url.lower().endswith(".pdf"):
-            try:
-                tables = tabula.read_pdf(BytesIO(resp.content), pages="all")
-                if tables:
-                    df = tables[0]
-            except Exception as e:
-                df = pd.DataFrame({"text": [str(e)]})
-
         # --- Unknown type fallback ---
         else:
             df = pd.DataFrame({"text": [resp.text]})
 
         # --- Normalize columns ---
-        df.columns = df.columns.map(str).str.replace(
-            r'\[.*\]', '', regex=True).str.strip()
+        df.columns = df.columns.map(str).str.replace(r'\[.*\]', '', regex=True).str.strip()
 
         return {
             "status": "success",
@@ -236,7 +212,6 @@ def clean_llm_output(output: str) -> Dict:
             return {"error": f"JSON parsing failed: {str(e)}", "raw": candidate}
     except Exception as e:
         return {"error": str(e)}
-
 
 SCRAPE_FUNC = r'''
 from typing import Dict, Any
@@ -381,11 +356,9 @@ def plot_to_base64(max_bytes=100000):
     script_lines.append("\nresults = {}\n")
     script_lines.append(code)
     # ensure results printed as json
-    script_lines.append(
-        "\nprint(json.dumps({'status':'success','result':results}, default=str), flush=True)\n")
+    script_lines.append("\nprint(json.dumps({'status':'success','result':results}, default=str), flush=True)\n")
 
-    tmp = tempfile.NamedTemporaryFile(
-        mode='w', suffix='.py', delete=False, encoding='utf-8')
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
     tmp.write("\n".join(script_lines))
     tmp.flush()
     tmp_path = tmp.name
@@ -425,8 +398,7 @@ llm = ChatGoogleGenerativeAI(
 )
 
 # Tools list for agent (LangChain tool decorator returns metadata for the LLM)
-# we only expose scraping as a tool; agent will still produce code
-tools = [scrape_url_to_dataframe]
+tools = [scrape_url_to_dataframe]  # we only expose scraping as a tool; agent will still produce code
 
 # Prompt: instruct agent to call the tool and output JSON only
 prompt = ChatPromptTemplate.from_messages([
@@ -455,8 +427,7 @@ You must:
 
 agent = create_tool_calling_agent(
     llm=llm,
-    # let the agent call tools if it wants; we will also pre-process scrapes
-    tools=[scrape_url_to_dataframe],
+    tools=[scrape_url_to_dataframe],  # let the agent call tools if it wants; we will also pre-process scrapes
     prompt=prompt
 )
 
@@ -482,10 +453,8 @@ def run_agent_safely(llm_input: str) -> Dict:
     4. Execute the code in a temp file and return results mapping questions -> answers
     """
     try:
-        response = agent_executor.invoke(
-            {"input": llm_input}, {"timeout": LLM_TIMEOUT_SECONDS})
-        raw_out = response.get("output") or response.get(
-            "final_output") or response.get("text") or ""
+        response = agent_executor.invoke({"input": llm_input}, {"timeout": LLM_TIMEOUT_SECONDS})
+        raw_out = response.get("output") or response.get("final_output") or response.get("text") or ""
         if not raw_out:
             return {"error": f"Agent returned no output. Full response: {response}"}
 
@@ -500,8 +469,7 @@ def run_agent_safely(llm_input: str) -> Dict:
         questions: List[str] = parsed["questions"]
 
         # Detect scrape calls; find all URLs used in scrape_url_to_dataframe("URL")
-        urls = re.findall(
-            r"scrape_url_to_dataframe\(\s*['\"](.*?)['\"]\s*\)", code)
+        urls = re.findall(r"scrape_url_to_dataframe\(\s*['\"](.*?)['\"]\s*\)", code)
         pickle_path = None
         if urls:
             # For now support only the first URL (agent may code multiple scrapes; you can extend this)
@@ -518,8 +486,7 @@ def run_agent_safely(llm_input: str) -> Dict:
             # Make sure agent's code can reference df/data: we will inject the pickle loader in the temp script
 
         # Execute code in temp python script
-        exec_result = write_and_run_temp_python(
-            code, injected_pickle=pickle_path, timeout=LLM_TIMEOUT_SECONDS)
+        exec_result = write_and_run_temp_python(code, injected_pickle=pickle_path, timeout=LLM_TIMEOUT_SECONDS)
         if exec_result.get("status") != "success":
             return {"error": f"Execution failed: {exec_result.get('message', exec_result)}", "raw": exec_result.get("raw")}
 
@@ -535,6 +502,8 @@ def run_agent_safely(llm_input: str) -> Dict:
         logger.exception("run_agent_safely failed")
         return {"error": str(e)}
 
+
+from fastapi import Request
 
 @app.post("/api")
 async def analyze_data(request: Request):
@@ -585,21 +554,11 @@ async def analyze_data(request: Request):
                         image = image.convert("RGB")  # ensure RGB format
                         df = pd.DataFrame({"image": [image]})
                     else:
-                        raise HTTPException(
-                            400, "PIL not available for image processing")
+                        raise HTTPException(400, "PIL not available for image processing")
                 except Exception as e:
-                    raise HTTPException(
-                        400, f"Image processing failed: {str(e)}")
-            elif filename.endswith(".pdf"):
-                try:
-                    tables = tabula.read_pdf(BytesIO(content), pages="all")
-                    if tables:
-                        df = tables[0]
-                except Exception as e:
-                    df = pd.DataFrame({"text": [str(e)]})
+                    raise HTTPException(400, f"Image processing failed: {str(e)}")  
             else:
-                raise HTTPException(
-                    400, f"Unsupported data file type: {filename}")
+                raise HTTPException(400, f"Unsupported data file type: {filename}")
 
             # Pickle for injection
             temp_pkl = tempfile.NamedTemporaryFile(suffix=".pkl", delete=False)
@@ -665,8 +624,7 @@ async def analyze_data(request: Request):
                         if isinstance(val, str) and val.startswith("data:image/"):
                             # Remove data URI prefix
                             val = val.split(",", 1)[1] if "," in val else val
-                        mapped[key] = caster(val) if val not in (
-                            None, "") else val
+                        mapped[key] = caster(val) if val not in (None, "") else val
                     except Exception:
                         mapped[key] = result[q]
             result = mapped
@@ -691,10 +649,8 @@ def run_agent_safely_unified(llm_input: str, pickle_path: str = None) -> Dict:
         max_retries = 3
         raw_out = ""
         for attempt in range(1, max_retries + 1):
-            response = agent_executor.invoke(
-                {"input": llm_input}, {"timeout": LLM_TIMEOUT_SECONDS})
-            raw_out = response.get("output") or response.get(
-                "final_output") or response.get("text") or ""
+            response = agent_executor.invoke({"input": llm_input}, {"timeout": LLM_TIMEOUT_SECONDS})
+            raw_out = response.get("output") or response.get("final_output") or response.get("text") or ""
             if raw_out:
                 break
         if not raw_out:
@@ -711,22 +667,19 @@ def run_agent_safely_unified(llm_input: str, pickle_path: str = None) -> Dict:
         questions = parsed["questions"]
 
         if pickle_path is None:
-            urls = re.findall(
-                r"scrape_url_to_dataframe\(\s*['\"](.*?)['\"]\s*\)", code)
+            urls = re.findall(r"scrape_url_to_dataframe\(\s*['\"](.*?)['\"]\s*\)", code)
             if urls:
                 url = urls[0]
                 tool_resp = scrape_url_to_dataframe(url)
                 if tool_resp.get("status") != "success":
                     return {"error": f"Scrape tool failed: {tool_resp.get('message')}"}
                 df = pd.DataFrame(tool_resp["data"])
-                temp_pkl = tempfile.NamedTemporaryFile(
-                    suffix=".pkl", delete=False)
+                temp_pkl = tempfile.NamedTemporaryFile(suffix=".pkl", delete=False)
                 temp_pkl.close()
                 df.to_pickle(temp_pkl.name)
                 pickle_path = temp_pkl.name
 
-        exec_result = write_and_run_temp_python(
-            code, injected_pickle=pickle_path, timeout=LLM_TIMEOUT_SECONDS)
+        exec_result = write_and_run_temp_python(code, injected_pickle=pickle_path, timeout=LLM_TIMEOUT_SECONDS)
         if exec_result.get("status") != "success":
             return {"error": f"Execution failed: {exec_result.get('message')}", "raw": exec_result.get("raw")}
 
@@ -738,11 +691,14 @@ def run_agent_safely_unified(llm_input: str, pickle_path: str = None) -> Dict:
         return {"error": str(e)}
 
 
+    
+from fastapi.responses import FileResponse, Response
+import base64, os
+
 # 1×1 transparent PNG fallback (if favicon.ico file not present)
 _FAVICON_FALLBACK_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO3n+9QAAAAASUVORK5CYII="
 )
-
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -755,17 +711,14 @@ async def favicon():
         return FileResponse(path, media_type="image/x-icon")
     return Response(content=_FAVICON_FALLBACK_PNG, media_type="image/png")
 
-
-@app.get("/api", include_in_schema=False)
+@app.get("/api/health", include_in_schema=False)
 async def analyze_get_info():
     """Health/info endpoint. Use POST /api for actual analysis."""
     return JSONResponse({
         "ok": True,
         "message": "Server is running. Use POST /api with 'questions_file' and optional 'data_file'.",
-
     })
 
-# You do NOT need this block if you are running with:
-# uvicorn app:app --host 0.0.0.0 --port 80
-# DigitalOcean App Platform will start your app using the command you specify.
-# This block is only needed if you want to run the app by executing `python app.py` directly.
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
