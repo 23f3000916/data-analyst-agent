@@ -20,6 +20,4 @@ pyarrow
 tabulate
 html5lib
 duckdb
-psutil
-httpx
 scikit-learn
