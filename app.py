@@ -3,196 +3,284 @@ import os
 import re
 import math
 import json
-from typing import Dict, Any, List, Tuple, Optional
 import base64
+from typing import Dict, Any, List, Tuple, Optional
+
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, Request, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.datastructures import UploadFile
+
 import matplotlib
-matplotlib.use("Agg") # headless
+matplotlib.use("Agg")  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from PIL import Image
-import requests
-from bs4 import BeautifulSoup
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 
-# Initialize FastAPI app
 app = FastAPI(title="Data Analyst Agent API")
 
-# Environment variables
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-# Initialize LLM
-if GOOGLE_API_KEY:
-    llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=GOOGLE_API_KEY)
-else:
-    llm = None
-
-IMAGE_SIZE_LIMIT = 100_000 # 100 kB cap per guideline
+IMAGE_SIZE_LIMIT = 100_000  # 100 kB cap
 
 # ---------------------------
-# Multipart reading
+# Multipart Form Reading
 # ---------------------------
 async def read_form(request: Request) -> Tuple[str, Dict[str, UploadFile]]:
+    """Reads multipart form data to extract questions and files."""
     form = await request.form()
     questions_text = ""
     files: Dict[str, UploadFile] = {}
 
+    # Read questions from 'questions.txt' field
     if "questions.txt" in form and isinstance(form["questions.txt"], UploadFile):
-        questions_text = (await form["questions.txt"].read()).decode("utf-8", errors="replace")
+        content = await form["questions.txt"].read()
+        questions_text = content.decode("utf-8", errors="replace")
 
+    # Collect all uploaded files
     for key, value in form.items():
         if isinstance(value, UploadFile):
             files[key] = value
 
     return questions_text.strip(), files
 
-def read_csv_upload(upload: UploadFile) -> Optional[pd.DataFrame]:
+def read_csv_from_upload(upload: UploadFile) -> Optional[pd.DataFrame]:
+    """Reads a CSV file from an upload into a pandas DataFrame."""
     try:
-        data = upload.file.read()
+        # Use seek(0) to allow re-reading the file if needed
         upload.file.seek(0)
-        return pd.read_csv(io.BytesIO(data))
-    except Exception:
+        return pd.read_csv(upload.file)
+    except Exception as e:
+        print(f"Error reading CSV upload: {e}")
         return None
 
 def load_first_csv(files: Dict[str, UploadFile]) -> Optional[pd.DataFrame]:
-    for k, f in files.items():
-        if k.lower() == "data.csv":
-            return read_csv_upload(f)
-    for _, f in files.items():
-        name = (f.filename or "").lower()
-        if name.endswith(".csv"):
-            return read_csv_upload(f)
+    """Finds and loads the first available CSV file from the uploads."""
+    # Prioritize files explicitly named 'data.csv' or 'edges.csv'
+    for name in ["data.csv", "edges.csv"]:
+        if name in files:
+            return read_csv_from_upload(files[name])
+
+    # Fallback to any file with a .csv extension
+    for upload in files.values():
+        if (upload.filename or "").lower().endswith(".csv"):
+            return read_csv_from_upload(upload)
     return None
 
 # ---------------------------
-# Web Scraping
+# Graph Analysis Utilities
 # ---------------------------
-def scrape_wikipedia_table(url: str) -> Optional[pd.DataFrame]:
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
-        table = soup.find("table", {"class": "wikitable"})
-        if table:
-            return pd.read_html(str(table))[0]
-    except Exception as e:
-        print(f"Error scraping Wikipedia table: {e}")
+def detect_edge_columns(df: pd.DataFrame) -> Optional[Tuple[str, str]]:
+    """Detects source and target columns for graph edges."""
+    cols = [c.lower() for c in df.columns]
+    common_pairs = [("source", "target"), ("src", "dst"), ("from", "to")]
+    for src, dst in common_pairs:
+        if src in cols and dst in cols:
+            return df.columns[cols.index(src)], df.columns[cols.index(dst)]
+    # Fallback to the first two columns if no specific names are found
+    if len(df.columns) >= 2:
+        return df.columns[0], df.columns[1]
     return None
 
-# ---------------------------
-# Data Analysis
-# ---------------------------
-def analyze_movie_data(df: pd.DataFrame) -> Dict[str, Any]:
-    # Clean and preprocess data
-    df.columns = df.columns.str.replace(r"\[.*\]", "", regex=True)
-    df["Worldwide gross"] = df["Worldwide gross"].replace(r'[\$,]', '', regex=True).astype(float)
-    df["Year"] = df["Year"].astype(int)
+def build_undirected_graph(df: pd.DataFrame, src: str, dst: str) -> Tuple[Dict[str, set], List[Tuple[str, str]]]:
+    """Builds an adjacency list and edge list for an undirected graph."""
+    adj = {}
+    edges = set()
+    for _, row in df.iterrows():
+        u, v = str(row[src]), str(row[dst])
+        if u and v and u != v:
+            # Add nodes to adjacency list
+            adj.setdefault(u, set()).add(v)
+            adj.setdefault(v, set()).add(u)
+            # Add edge, sorting to ensure uniqueness for undirected graph
+            edges.add(tuple(sorted((u, v))))
+    return adj, sorted(list(edges))
 
-    # Perform analysis
-    movies_before_2000 = df[df["Year"] < 2000]
-    two_billion_movies_before_2000 = movies_before_2000[movies_before_2000["Worldwide gross"] > 2_000_000_000]
-    earliest_film_over_1_5_billion = df[df["Worldwide gross"] > 1_500_000_000].sort_values("Year").iloc[0]
+def get_graph_metrics(adj: Dict[str, set], edges: List[Tuple[str, str]]) -> Dict[str, Any]:
+    """Calculates key metrics for the graph."""
+    num_nodes = len(adj)
+    num_edges = len(edges)
+    avg_degree = (2 * num_edges / num_nodes) if num_nodes > 0 else 0
+    density = (2 * num_edges / (num_nodes * (num_nodes - 1))) if num_nodes > 1 else 0
 
-    # Correlation and scatterplot
-    df["Rank"] = df.index + 1
-    correlation = df["Rank"].corr(df["Peak"])
-    scatterplot = create_scatterplot(df["Rank"], df["Peak"], "Rank", "Peak")
+    degrees = {node: len(neighbors) for node, neighbors in adj.items()}
+    max_degree = 0
+    highest_degree_node = ""
+    if degrees:
+        max_degree = max(degrees.values())
+        # Find the first node with the max degree (alphabetically)
+        highest_degree_node = sorted([node for node, deg in degrees.items() if deg == max_degree])[0]
 
     return {
-        "two_billion_movies_before_2000": len(two_billion_movies_before_2000),
-        "earliest_film_over_1_5_billion": earliest_film_over_1_5_billion["Title"],
-        "correlation": correlation,
-        "scatterplot": scatterplot,
+        "node_count": num_nodes,
+        "edge_count": float(num_edges),
+        "average_degree": float(avg_degree),
+        "density": float(density),
+        "highest_degree_node": highest_degree_node,
+        "max_degree": int(max_degree),
+    }
+
+def bfs_shortest_path(adj: Dict[str, set], start: str, end: str) -> Optional[int]:
+    """Finds the shortest path length between two nodes using BFS."""
+    if start not in adj or end not in adj:
+        return None
+    if start == end:
+        return 0
+
+    from collections import deque
+    queue = deque([(start, 0)])
+    visited = {start}
+    while queue:
+        node, dist = queue.popleft()
+        if node == end:
+            return dist
+        for neighbor in adj.get(node, set()):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append((neighbor, dist + 1))
+    return None # Path not found
+
+# ---------------------------
+# Plotting and Image Encoding
+# ---------------------------
+def encode_figure_to_base64(fig) -> str:
+    """Encodes a Matplotlib figure to a base64 PNG string, respecting size limits."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    data = buf.getvalue()
+
+    # If already within limit, return
+    if len(data) <= IMAGE_SIZE_LIMIT:
+        return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+
+    # If oversized, resize progressively
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    for scale in [0.8, 0.6, 0.4, 0.2]:
+        w, h = img.size
+        resized_img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+        out_buf = io.BytesIO()
+        resized_img.save(out_buf, format="PNG", optimize=True)
+        resized_data = out_buf.getvalue()
+        if len(resized_data) <= IMAGE_SIZE_LIMIT:
+            return "data:image/png;base64," + base64.b64encode(resized_data).decode("ascii")
+    
+    # Fallback to the smallest generated image if still too large
+    return "data:image/png;base64," + base64.b64encode(resized_data).decode("ascii")
+
+
+def create_blank_image_uri(label: str) -> str:
+    """Creates a small blank image with a text label."""
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.text(0.5, 0.5, label, ha="center", va="center", fontsize=10)
+    ax.axis("off")
+    return encode_figure_to_base64(fig)
+
+def draw_network_graph(adj: Dict[str, set], edges: List[Tuple[str, str]]) -> str:
+    """Generates a visualization of the network graph."""
+    if not adj:
+        return create_blank_image_uri("No Graph Data")
+
+    nodes = sorted(adj.keys())
+    num_nodes = len(nodes)
+    
+    # Use circular layout for nodes
+    angles = np.linspace(0, 2 * math.pi, num_nodes, endpoint=False)
+    pos = {node: (math.cos(a), math.sin(a)) for node, a in zip(nodes, angles)}
+    
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.axis("off")
+
+    # Draw edges
+    for u, v in edges:
+        ax.plot([pos[u][0], pos[v][0]], [pos[u][1], pos[v][1]], 'k-', lw=0.7, alpha=0.5)
+        
+    # Draw nodes
+    ax.scatter([p[0] for p in pos.values()], [p[1] for p in pos.values()], s=200, c='skyblue', zorder=3)
+    
+    # Draw labels
+    for node, (x, y) in pos.items():
+        ax.text(x, y, node, ha='center', va='center', fontsize=9, fontweight='bold')
+        
+    return encode_figure_to_base64(fig)
+
+def draw_degree_histogram(adj: Dict[str, set]) -> str:
+    """Generates a degree distribution histogram with green bars."""
+    if not adj:
+        return create_blank_image_uri("No Degree Data")
+
+    degrees = [len(neighbors) for neighbors in adj.values()]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.hist(degrees, bins=max(5, len(set(degrees))), color='green', alpha=0.7)
+    ax.set_title("Node Degree Distribution")
+    ax.set_xlabel("Degree")
+    ax.set_ylabel("Number of Nodes")
+    return encode_figure_to_base64(fig)
+
+# ---------------------------
+# Task Routing and Execution
+# ---------------------------
+def is_network_analysis_task(q_text: str) -> bool:
+    """Checks if the questions indicate a network analysis task."""
+    return any(keyword in q_text.lower() for keyword in [
+        "network", "graph", "edge_count", "highest_degree_node", "shortest_path"
+    ])
+
+def perform_network_analysis(df: Optional[pd.DataFrame]) -> Dict[str, Any]:
+    """Orchestrates the full network analysis workflow."""
+    if df is None or df.empty:
+        return {
+            "edge_count": 0.0, "highest_degree_node": "", "average_degree": 0.0,
+            "density": 0.0, "shortest_path_alice_eve": -1.0,
+            "network_graph": create_blank_image_uri("No Data Provided"),
+            "degree_histogram": create_blank_image_uri("No Data Provided"),
+        }
+
+    edge_cols = detect_edge_columns(df)
+    if not edge_cols:
+        return {
+            "edge_count": 0.0, "highest_degree_node": "", "average_degree": 0.0,
+            "density": 0.0, "shortest_path_alice_eve": -1.0,
+            "network_graph": create_blank_image_uri("Bad Columns"),
+            "degree_histogram": create_blank_image_uri("Bad Columns"),
+        }
+    
+    adj, edges = build_undirected_graph(df, edge_cols[0], edge_cols[1])
+    metrics = get_graph_metrics(adj, edges)
+    
+    shortest_path = bfs_shortest_path(adj, "Alice", "Eve")
+
+    return {
+        "edge_count": metrics["edge_count"],
+        "highest_degree_node": metrics["highest_degree_node"],
+        "average_degree": metrics["average_degree"],
+        "density": metrics["density"],
+        "shortest_path_alice_eve": float(shortest_path) if shortest_path is not None else -1.0,
+        "network_graph": draw_network_graph(adj, edges),
+        "degree_histogram": draw_degree_histogram(adj),
     }
 
 # ---------------------------
-# Plotting
-# ---------------------------
-def base64_encode(b: bytes) -> str:
-    return base64.b64encode(b).decode("ascii")
-
-def encode_png_ensure_limit(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    png = buf.getvalue()
-
-    if len(png) <= IMAGE_SIZE_LIMIT:
-        return "data:image/png;base64," + base64_encode(png)
-
-    img = Image.open(io.BytesIO(png)).convert("RGB")
-    w, h = img.size
-    for scale in (0.85, 0.7, 0.55, 0.45, 0.35, 0.25):
-        resized = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
-        out = io.BytesIO()
-        resized.save(out, format="PNG", optimize=True)
-        data = out.getvalue()
-        if len(data) <= IMAGE_SIZE_LIMIT:
-            return "data:image/png;base64," + base64_encode(data)
-    return "data:image/png;base64," + base64_encode(data)
-
-def create_scatterplot(x, y, xlabel, ylabel) -> str:
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.scatter(x, y)
-    m, b = np.polyfit(x, y, 1)
-    ax.plot(x, m * x + b, color='red', linestyle='--')
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.set_title(f"{ylabel} vs. {xlabel}")
-    return encode_png_ensure_limit(fig)
-
-# ---------------------------
-# API Endpoints
+# API Endpoint
 # ---------------------------
 @app.post("/api/")
-async def api(request: Request):
+async def analyze_data(request: Request):
+    """Main API endpoint to handle data analysis requests."""
     questions_text, files = await read_form(request)
-
-    if not questions_text:
-        return JSONResponse(content={"error": "questions.txt is missing."}, status_code=400)
-
-    # Handle movie data analysis task
-    if "highest grossing films" in questions_text.lower():
-        url = "https://en.wikipedia.org/wiki/List_of_highest-grossing_films"
-        df = scrape_wikipedia_table(url)
-        if df is not None:
-            results = analyze_movie_data(df)
-            return JSONResponse(content=[
-                results["two_billion_movies_before_2000"],
-                results["earliest_film_over_1_5_billion"],
-                results["correlation"],
-                results["scatterplot"],
-            ])
-        else:
-            return JSONResponse(content={"error": "Failed to scrape or process data."}, status_code=500)
-
-    # Generic LLM-based analysis
-    if llm:
+    
+    if is_network_analysis_task(questions_text):
         df = load_first_csv(files)
-        if df is not None:
-            prompt = PromptTemplate(
-                input_variables=["data", "questions"],
-                template="Analyze the following data:\n{data}\n\nAnswer these questions:\n{questions}"
-            )
-            chain = LLMChain(llm=llm, prompt=prompt)
-            response = chain.run(data=df.to_string(), questions=questions_text)
-            return JSONResponse(content=json.loads(response))
+        results = perform_network_analysis(df)
+        return JSONResponse(content=results)
 
-    return JSONResponse(content={"error": "Unsupported request or LLM not configured."}, status_code=400)
+    # Fallback for other tasks or if no specific task is identified
+    return JSONResponse(
+        content={"error": "Unsupported analysis type requested."},
+        status_code=400
+    )
 
+# ---------------------------
+# Health Check
+# ---------------------------
 @app.get("/health")
-def health():
+def health_check():
+    """Simple health check endpoint."""
     return PlainTextResponse("ok")
-
-@app.get("/ls")
-def ls():
-    try:
-        files = os.listdir(".")
-        return JSONResponse({"cwd": os.getcwd(), "files": files})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
