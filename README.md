@@ -1,115 +1,84 @@
-# FastAPI AI Task Runner
+# ⚡ TDS Project 2 - Data Analyst Agent — Fast, AI‑Assisted Analytics
 
-This project provides a simple API that uses an AI model to perform data analysis and web scraping tasks. You provide a text prompt and optional data files, and the service processes them in a sandboxed environment to generate a result.
-
-It's designed for easy deployment on Railway or for running locally.
+A lightweight agent that turns raw data and plain‑English questions into concise insights and clean visuals. Bring a dataset, add a questions.txt, and get answers—fast.
 
 ---
 
-## Features
+## What It Does
+- Parses your questions and runs data analysis automatically
+- Produces short summaries and ready‑to‑use charts
+- Works locally; no data is stored in the cloud
 
-- **AI-Powered Tasks**: Uses Google Gemini to interpret natural language instructions for data processing.
-- **Sandboxed Execution**: Each task runs in a secure, isolated folder to ensure safety.
-- **Simple API**: A single `POST` endpoint to submit jobs and receive results.
-- **Dynamic Package Installation**: Automatically installs required Python libraries for each task.
-- **Easy Deployment**: Ready to deploy on Railway with minimal configuration.
-- **Local Development**: Fully configured for local testing and development.
-
----
-
-## Project Structure
-
-```
-.
-├── main.py             # FastAPI application and main logic
-├── task_engine.py      # Handles sandboxed task execution
-├── gemini.py           # Client for interacting with the Gemini API
-├── requirements.txt    # Project dependencies
-├── Procfile            # Deployment configuration for Railway
-├── .env.example        # Example environment variables
-└── uploads/            # Directory for temporary request data
-```
+## Highlights
+- **AI insights** (Google Generative AI)
+- **Rich visuals** (Matplotlib/Seaborn)
+- **Web source mode** (fetch data from URLs)
+- **Multi‑format input** (CSV/Excel/JSON/Parquet/TXT)
+- **Batch Q&A** (multiple questions in one go)
+- **FastAPI backend** with a minimal UI
 
 ---
 
-## Getting Started
-
-### Prerequisites
-
-- Python 3.12+
-- A Google Gemini API Key
-
-### 1. Local Setup
-
-First, clone the repository and set up a virtual environment:
-
+## Quick Start
 ```bash
-# Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
-
-# Install dependencies
+git clone https://github.com/24ds1000034/TDS_P2_DataAnalystAgent.git
+cd data-analyst-agent
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
-
-Create a `.env` file in the root directory and add your Gemini API key.
-
-**.env**
+Create `.env` (either single key or multi‑key fallback):
+```bash
+GEMINI_API_KEY=your_key
+# or
+gemini_api_1=your_key
+gemini_api_2=your_key
+LLM_TIMEOUT_SECONDS=240
 ```
-GENAI_API_KEY="your_gemini_api_key_here"
+
+Run locally:
+```bash
+python -m uvicorn app:app --reload
+# open http://localhost:8000
 ```
 
-The application loads this key from the environment; no keys are ever hardcoded.
+---
 
-### 3. Run the Server
-
-Start the application using Uvicorn:
+## Usage
+1. Create `questions.txt` (one request per line).  
+2. (Optional) Prepare a dataset file.  
+3. Upload via the home page or call the API:
 
 ```bash
-uvicorn main.py:app --host 0.0.0.0 --port 8000
+curl -X POST http://127.0.0.1:8000/api   -F "questions=@questions.txt"   -F "dataset=@data.csv"
 ```
 
-You can check if the server is running by visiting `http://localhost:8000` in your browser.
+**Endpoints**
+- `GET /` – Web app  
+- `POST /api` – Submit questions (+ optional dataset)  
+- `GET /summary` – Diagnostics
+
+**Supported formats**
+CSV (`.csv`), Excel (`.xlsx`, `.xls`), JSON (`.json`), Parquet (`.parquet`), Text (`.txt`).
 
 ---
 
-## How It Works
+## Deploy on Railway (3 steps)
+1. Push this repo to GitHub.  
+2. In Railway: **New Project → Deploy from GitHub**.  
+3. Add variables (`gemini_api_1..10`, `LLM_TIMEOUT_SECONDS`, optional `PORT`).
 
-1.  The API receives a request containing a `question.txt` prompt and optional data files.
-2.  The prompt and file list are sent to the AI model (Gemini), which interprets the request and defines the necessary processing steps and Python libraries for the task.
-3.  The task engine prepares a secure, isolated environment for the job. It installs the required libraries if they are not already present.
-4.  The processing steps are executed within the sandbox. The script can read the provided files and write its output (`result.json` or `result.txt`) to its working directory.
-5.  The final result file is read and its content is returned as the API response.
-
----
-
-## Deploy to Railway
-
-1.  Push the code to a GitHub repository.
-2.  Create a new project on Railway and connect it to your repository.
-3.  Add your `GENAI_API_KEY` in the **Variables** tab in your Railway project settings.
-4.  Railway will automatically deploy the application using the provided `Procfile`.
+_Check logs with `railway logs`._
 
 ---
 
-## API Usage
+## Config (essentials)
+- `GEMINI_API_KEY` **or** `gemini_api_1..10` (at least one key required)  
+- `LLM_TIMEOUT_SECONDS` (default 240)  
+- `PORT` (Railway injects this automatically)
 
-Send a `POST` request to the `/api` endpoint with your instructions in a `question.txt` file and any additional data files.
+---
 
--   **Endpoint**: `POST /api`
--   **Body**: `multipart/form-data`
--   **Required Field**: `question.txt` (A file containing the prompt for the AI).
--   **Optional Fields**: Attach any other files (`.csv`, `.json`, etc.) needed for the task.
-
-### Example `curl` Request
-
-```bash
-curl -X POST "http://localhost:8000/api" \
-  -H "Accept: application/json" \
-  -F "question.txt=@/path/to/your/question.txt" \
-  -F "data.csv=@/path/to/your/data.csv"
-```
-
-The API will return a JSON object with the results of the task.
+## Security & License
+- Keys live in `.env` (do not commit).  
+- CORS should be restricted in production.  
+- Licensed under **MIT**.
