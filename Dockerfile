@@ -18,7 +18,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY . .
+COPY app.py .
+COPY index.html .
+COPY entrypoint.sh .
+
+# Copy environment file if it exists
+COPY .env* ./
 
 # Make entrypoint script executable
 RUN chmod +x entrypoint.sh
