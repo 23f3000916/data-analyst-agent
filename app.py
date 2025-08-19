@@ -363,6 +363,7 @@ def write_and_run_temp_python(code: str, injected_pickle: str = None, timeout: i
     helper = r'''
 def plot_to_base64(max_bytes=100000):
     buf = BytesIO()
+    plt.xticks(rotation=0, ha='center') # Set rotation to horizontal and align to center
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
     buf.seek(0)
     img_bytes = buf.getvalue()
